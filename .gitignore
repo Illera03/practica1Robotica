@@ -1,0 +1,7 @@
+# Datos de ejecución generados por extractor_cinematico.py
+datos_*.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
