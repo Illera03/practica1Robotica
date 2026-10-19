@@ -6,7 +6,7 @@ from control_robot import ControlRobot
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from dataclasses import dataclass
-from math import pi
+from math import pi, sin, cos
 
 
 @dataclass
@@ -23,6 +23,9 @@ class ExtractorCinematico(Node):
     """Nodo suscriptor que extrae posición, velocidad y aceleración del UR3e."""
 
     def __init__(self) -> None:
+        """
+        Inicializa el nodo y se suscribe a /joint_states.
+        """
         super().__init__("extractor_cinematico")
         # Nos suscribimos a /joint_states igual que hace control_robot.py
         self._suscriptor = self.create_subscription(
@@ -38,7 +41,9 @@ class ExtractorCinematico(Node):
         self._muestras_por_trayectoria: dict[str, list[MuestraCinematica]] = {} # Diccionario de la trayectoria para la lista de muestras
 
     def _callback_articulaciones(self, msg: JointState) -> None:
-        """Se ejecuta automáticamente cada vez que el robot publica su estado."""
+        """
+        Se ejecuta automáticamente cada vez que el robot publica su estado.
+        """
         tiempo_actual: float = msg.header.stamp.sec + (msg.header.stamp.nanosec / 1e9)
         if self._tiempo_anterior is None: # La primera vez que recibimos un mensaje, no podemos calcular la aceleración
             self._tiempo_anterior = tiempo_actual
@@ -67,14 +72,36 @@ class ExtractorCinematico(Node):
             if self.trayectoria_actual is not None:
                 self._muestras_por_trayectoria.setdefault(self.trayectoria_actual, []).append(muestra)
 
-            #Actualizamos _velocidades_anteriores
+            # Actualizamos _velocidades_anteriores
             self._velocidades_anteriores[name] = velocity
 
         # 3. Actualizamos _tiempo_anterior
         self._tiempo_anterior = tiempo_actual
+        
+HOME = [0, -pi / 2, -pi / 2, -pi / 2, pi / 2, 0]
+INICIO = [0, 0, 0, 0, 0, 0]
+
+def ir_a_home(control: ControlRobot) -> None:
+    """
+    Mueve el robot a la posición inicial.
+    """
+    if not control.mover_articulaciones(HOME):
+        print("MoveIt no pudo ir a la posición home")
+
+def bajar_efector(control: ControlRobot) -> None:
+    """
+    Baja el efector final 10 cm en el eje Z.
+    """
+    pose = control.pose_actual()
+    pose.position.z -= 0.1
+    if not control.mover_a_pose(pose):
+        print("MoveIt no pudo bajar el efector final")
 
 
 def main() -> None:
+    """
+    Función principal que ejecuta la práctica.
+    """
     rclpy.init()
     control = ControlRobot()
     extractor = ExtractorCinematico()
@@ -88,17 +115,18 @@ def main() -> None:
         # --- Trayectoria joint ---
         extractor.trayectoria_actual = "joint"
         pi_medios = pi / 2
-        if not control.mover_articulaciones([0, -pi_medios, -pi_medios, -pi_medios, pi_medios, 0]):
+        if not control.mover_articulaciones(INICIO):
+            print("MoveIt no pudo mover las articulaciones")
+        
+        # Movimiento grabado: INICIO -> HOME
+        if not control.mover_articulaciones(HOME):
             print("MoveIt no pudo mover las articulaciones")
         extractor.trayectoria_actual = None
 
-        # Bajar el efector final antes de la trayectoria lineal
-        pose_actual = control.pose_actual()
-        pose_actual.position.z -= 0.1
-        if not control.mover_a_pose(pose_actual):
-            print("MoveIt no pudo bajar el efector final")
 
         # --- Trayectoria lineal --- 
+        ir_a_home(control)
+        bajar_efector(control)
         poses = []
         # Pose 1
         pose_actual = control.pose_actual()
@@ -107,7 +135,6 @@ def main() -> None:
         # Pose 2
         pose_actual.position.y += 0.1
         poses.append(copy.deepcopy(pose_actual))
-
         # Pose 3 
         pose_actual.position.x += 0.1
         poses.append(copy.deepcopy(pose_actual))
@@ -116,10 +143,31 @@ def main() -> None:
         extractor.trayectoria_actual = "lineal"
         if not control.mover_trayectoria(poses):
             print("MoveIt no pudo planificar o ejecutar la trayectoria lineal")
-
         extractor.trayectoria_actual = None
-        # --- Trayectoria circular --- 
-            # TODO
+        
+
+        # --- Trayectoria circular ---
+        ir_a_home(control)
+        bajar_efector(control)
+        pose_inicial = control.pose_actual()
+        radio = 0.03
+        poses = []  # lista nueva, sin los waypoints de la trayectoria lineal
+
+        # Círculo en el plano XY que empieza y acaba en la pose inicial 
+        for i in range(0, 361, 10):
+            angulo = i * (pi / 180)
+            pose = copy.deepcopy(pose_inicial)
+            pose.position.x = pose_inicial.position.x + radio * (1 - cos(angulo))
+            pose.position.y = pose_inicial.position.y + radio * sin(angulo)
+            poses.append(pose)
+
+        extractor.trayectoria_actual = "circular"
+        if not control.mover_trayectoria(poses):
+            print("MoveIt no pudo planificar o ejecutar la trayectoria circular")
+        extractor.trayectoria_actual = None
+        
+        ir_a_home(control)
+            
     finally:
         control.ejecutor.shutdown()
         ejecutor_extractor.shutdown()
