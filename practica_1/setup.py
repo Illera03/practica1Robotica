@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            "extractor_cinematico = practica_1.extractor_cinematico:main",
         ],
     },
 )

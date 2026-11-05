@@ -2,11 +2,16 @@ import rclpy
 import threading
 import copy
 import csv
-from control_robot import ControlRobot
+from practica_1.control_robot import ControlRobot
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from dataclasses import dataclass
 from math import pi, sin, cos
+from practica_1_interfaces.msg import DatosCinematicos
+
+TOPIC_DATOS_CINEMATICOS = "/datos_cinematicos"
+# Por debajo de esta velocidad (rad/s) consideramos la articulación parada
+UMBRAL_VELOCIDAD = 1e-3
 
 
 @dataclass
@@ -39,7 +44,8 @@ class ExtractorCinematico(Node):
         self._velocidades_anteriores: dict[str, float] = {}
         self.trayectoria_actual: str | None = None 
         self._muestras_por_trayectoria: dict[str, list[MuestraCinematica]] = {} # Diccionario de la trayectoria para la lista de muestras
-
+        self._publicador = self.create_publisher(DatosCinematicos, TOPIC_DATOS_CINEMATICOS, 10)
+        
     def _callback_articulaciones(self, msg: JointState) -> None:
         """
         Se ejecuta automáticamente cada vez que el robot publica su estado.
@@ -50,33 +56,48 @@ class ExtractorCinematico(Node):
             self._velocidades_anteriores = dict(zip(msg.name, msg.velocity))
             return
         
-        # 1. Calculamos el tiempo transcurrido (Delta t)
         dt = tiempo_actual - self._tiempo_anterior
         if dt <= 0:
             return
 
-        # 2. Recorremos las 3 listas a la vez
+        # Solo guardamos si hay trayectoria activa y alguna articulación se mueve
+        trayectoria = self.trayectoria_actual
+        en_movimiento = any(abs(v) > UMBRAL_VELOCIDAD for v in msg.velocity)
+        guardar = trayectoria is not None and en_movimiento
+        aceleraciones: list[float] = []
+
         for name, position, velocity in zip(msg.name, msg.position, msg.velocity):
-            # Buscamos la velocidad que tenia la articulacion en el paso anterior
             velocidad_anterior = self._velocidades_anteriores.get(name, 0.0)
-
-            # Calculamos la aceleración y guardamos los datos
-            aceleracion = (velocity - velocidad_anterior)/ dt
-            muestra = MuestraCinematica(
-                tiempo=tiempo_actual,
-                articulacion=name,
-                posicion=position,
-                velocidad=velocity,
-                aceleracion=aceleracion,
-            )
-            if self.trayectoria_actual is not None:
-                self._muestras_por_trayectoria.setdefault(self.trayectoria_actual, []).append(muestra)
-
-            # Actualizamos _velocidades_anteriores
+            aceleracion = (velocity - velocidad_anterior) / dt
+            aceleraciones.append(aceleracion)
+            if guardar:
+                muestra = MuestraCinematica(
+                    tiempo=tiempo_actual,
+                    articulacion=name,
+                    posicion=position,
+                    velocidad=velocity,
+                    aceleracion=aceleracion,
+                )
+                self._muestras_por_trayectoria.setdefault(trayectoria, []).append(muestra)
+            # Se actualiza siempre, también en reposo, para que la primera
+            # aceleración de cada movimiento use la velocidad inmediatamente anterior
             self._velocidades_anteriores[name] = velocity
 
-        # 3. Actualizamos _tiempo_anterior
+        if guardar:
+            self._publicar(msg, trayectoria, aceleraciones)
+
         self._tiempo_anterior = tiempo_actual
+
+    def _publicar(self, msg: JointState, trayectoria: str, aceleraciones: list[float]) -> None:
+        """Envía posición, velocidad y aceleración de todas las articulaciones en un solo mensaje."""
+        datos = DatosCinematicos()
+        datos.header = msg.header
+        datos.trayectoria = trayectoria
+        datos.nombres = list(msg.name)
+        datos.posiciones = list(msg.position)
+        datos.velocidades = list(msg.velocity)
+        datos.aceleraciones = aceleraciones
+        self._publicador.publish(datos)
         
 HOME = [0, -pi / 2, -pi / 2, -pi / 2, pi / 2, 0]
 INICIO = [0, 0, 0, 0, 0, 0]
@@ -113,12 +134,10 @@ def main() -> None:
 
     try:
         # --- Trayectoria joint ---
-        extractor.trayectoria_actual = "joint"
-        pi_medios = pi / 2
         if not control.mover_articulaciones(INICIO):
-            print("MoveIt no pudo mover las articulaciones")
-        
-        # Movimiento grabado: INICIO -> HOME
+            print("MoveIt no pudo ir a la posición de partida")
+
+        extractor.trayectoria_actual = "joint"
         if not control.mover_articulaciones(HOME):
             print("MoveIt no pudo mover las articulaciones")
         extractor.trayectoria_actual = None

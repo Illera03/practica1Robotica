@@ -3,13 +3,14 @@
 <package format="3">
   <name>practica_1</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Práctica 1 de Robotica</description>
   <maintainer email="ikerarga3@gmail.com">laboratorio</maintainer>
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>practica_1_interfaces</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
