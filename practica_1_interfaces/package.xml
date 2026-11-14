@@ -4,7 +4,7 @@
   <name>practica_1_interfaces</name>
   <version>0.1.0</version>
   <description>Mensajes personalizados de la práctica 1: datos cinemáticos del UR3e</description>
-  <maintainer email="jorge.illera@opendeusto.es">Tu nombre</maintainer>
+  <maintainer email="jorge.illera@opendeusto.es">Jorge</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
